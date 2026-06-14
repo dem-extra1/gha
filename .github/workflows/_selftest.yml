@@ -6,4 +6,8 @@ on:
 
 jobs:
   links:
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
     uses: ./.github/workflows/check-links.yml
