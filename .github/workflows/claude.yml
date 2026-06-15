@@ -1,0 +1,591 @@
+name: Claude Code (reusable)
+
+# Agent-mode Claude Code workflow. Responds to "@claude" mentions in issues,
+# issue comments, PR review comments, and PR reviews, and can edit files and
+# open/update PRs in response. Ported from the canonical d-morrison versions
+# (serocalculator / rme) and parameterized so one workflow serves R packages,
+# Quarto books, and static repos.
+#
+# The caller stub (see examples/claude.yml) holds the `on:` triggers; this
+# reusable workflow inherits the caller's event context. Requires the
+# CLAUDE_CODE_OAUTH_TOKEN secret (pass via `secrets: inherit`).
+#
+# Because a `prompt:` is set, the action runs in AGENT mode, which does NOT
+# run the built-in branch-setup / git-push / response-comment machinery that
+# tag mode provides — so this workflow reproduces it with explicit pre/post
+# steps:
+#   - "Set up branch for issue trigger" creates claude/issue-N-<ts>.
+#   - "Push branch and open draft PR for issue trigger" pushes it + opens a
+#     draft PR, so an @claude mention on an *issue* yields a PR.
+#   - "Post Claude's response if no code was committed" surfaces prose replies
+#     (questions/reviews) that agent mode would otherwise discard.
+#   - "Dispatch <review-workflow-file> on @claude review" routes review
+#     requests to the dedicated reviewer instead of self-reviewing.
+
+on:
+  workflow_call:
+    inputs:
+      setup-r:
+        description: Install R (pandoc + setup-r) and the package's dependencies before running Claude.
+        type: boolean
+        default: true
+      install-quarto:
+        description: Install Quarto (with tinytex) so Claude can render .qmd files.
+        type: boolean
+        default: false
+      use-renv:
+        description: Restore dependencies with renv (setup-renv) instead of DESCRIPTION-based setup-r-dependencies.
+        type: boolean
+        default: false
+      r-extra-packages:
+        description: Extra packages for setup-r-dependencies (ignored when use-renv is true).
+        type: string
+        default: |
+          any::devtools
+          any::roxygen2
+          any::lintr
+          any::spelling
+          any::rcmdcheck
+          local::.
+      renv-cache-version:
+        description: renv cache-version passed to setup-renv; bump to invalidate the cached library.
+        type: string
+        default: '1'
+      checkout-submodules:
+        description: Check out private submodules using the SUBMODULES_TOKEN secret.
+        type: boolean
+        default: false
+      eager-pr:
+        description: >-
+          On an issue trigger, open the draft PR up front (before Claude works,
+          like GitHub Copilot) instead of only at the end. Empty PRs from runs
+          that produce no code are closed automatically.
+        type: boolean
+        default: false
+      reviewer:
+        description: GitHub user re-requested as reviewer when Claude pushes commits to a PR.
+        type: string
+        default: 'd-morrison'
+      review-workflow-file:
+        description: Workflow file (in the caller repo) dispatched to review Claude's commits.
+        type: string
+        default: 'claude-code-review.yml'
+      prompt-addendum:
+        description: Repo-specific instructions appended to Claude's prompt (e.g. the pre-commit checklist).
+        type: string
+        default: ''
+      claude-args:
+        description: Args passed to claude-code-action (allowed/disallowed tools, etc.).
+        type: string
+        # The agent is deliberately NOT granted `git push` in any form — the
+        # post-steps do all pushing, so the agent only stages and commits.
+        # That sidesteps the whole class of destructive push variants rather
+        # than enumerating deny patterns; the denials below are defense-in-
+        # depth in case a push tool is ever re-added to the allow list.
+        # `gh pr create` is likewise omitted: PR creation is owned by the
+        # post-steps (and the agent has no push), so granting it would only
+        # invite duplicate or malformed PRs. `gh pr edit` stays — it needs no
+        # push and lets the agent tidy a PR's title/body.
+        # `gh api` is allowed for the read-only polling loop, but its write
+        # forms (`-X`/`--method` mutations and `graphql`) are denied so a
+        # write-scoped GITHUB_TOKEN can't be used for arbitrary API mutations;
+        # the trusted-author gate remains the primary containment.
+        default: >-
+          --allowedTools
+          "Bash(Rscript -e 'lintr::lint*'),Bash(Rscript -e 'devtools::check*'),Bash(Rscript -e 'devtools::document*'),Bash(Rscript -e 'devtools::test*'),Bash(Rscript -e 'spelling::spell_check*'),Bash(Rscript -e 'roxygen2::roxygenise*'),Bash(quarto render:*),Bash(git diff:*),Bash(git log:*),Bash(git status:*),Bash(git show:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr edit:*),Bash(gh issue view:*),Bash(gh api:*),Read,Glob,Grep,Edit,MultiEdit,Write"
+          --disallowedTools
+          "Bash(gh api -X:*),Bash(gh api --method:*),Bash(gh api graphql:*),Bash(git push:*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --delete:*),Bash(git push -d:*),Bash(git push --mirror:*),Bash(git push --tags:*),Bash(git push --all:*),Bash(git push origin:*),Bash(git push -u origin:*)"
+      runs-on:
+        description: Runner for the job.
+        type: string
+        default: 'ubuntu-latest'
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+      SUBMODULES_TOKEN:
+        required: false
+
+jobs:
+  claude:
+    # Only trigger for trusted authors (OWNER / MEMBER / COLLABORATOR).
+    # Without this, anyone who can comment on a public issue or PR could
+    # trigger an LLM run with a write-scoped GITHUB_TOKEN.
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+
+    # Serialize @claude sessions per issue/PR so rapid mentions don't fire
+    # competing runs that race to push the same branch. `cancel-in-progress:
+    # false` queues a new mention behind the running session rather than
+    # killing it. `|| github.run_id` is a defensive fallback so an unexpected
+    # event with no issue/PR number doesn't collapse the group to `claude-`
+    # and serialize every session globally.
+    concurrency:
+      group: claude-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
+
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: write       # push branches / commits
+      pull-requests: write  # open / edit PRs
+      issues: write         # comment on issues
+      id-token: write
+      actions: write        # dispatch the review workflow via `gh workflow run`
+
+    steps:
+      # Post a visible acknowledgment BEFORE any multi-minute setup begins, so
+      # the user knows the @claude mention was received. `continue-on-error`
+      # keeps a transient comment-API hiccup from failing the run. Posted by
+      # github-actions[bot], so it does not re-trigger this workflow.
+      - name: Acknowledge @claude mention
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUM: ${{ github.event.issue.number || github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "$NUM" --repo "${{ github.repository }}" \
+            --body ":eyes: Picked up by [workflow run #${{ github.run_id }}]($RUN_URL). Setup runs first; Claude itself responds after that."
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      # Private submodules need a token with read access; the URL rewrite is
+      # the cleanest way to pass it through `git submodule update`.
+      - name: Checkout submodules
+        if: inputs.checkout-submodules
+        env:
+          SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+        run: |
+          # Fail fast with a clear message: an empty token would rewrite the
+          # URL with no credentials and surface as a confusing auth error.
+          if [ -z "$SUBMODULES_TOKEN" ]; then
+            echo "::error::checkout-submodules is enabled but the SUBMODULES_TOKEN secret is empty. Pass it via 'secrets: inherit' (or set the secret), or set checkout-submodules: false."
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive --depth 1
+
+      - name: Set up pandoc
+        if: inputs.setup-r
+        uses: r-lib/actions/setup-pandoc@v2
+
+      - name: Set up R
+        if: inputs.setup-r
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Set up Quarto
+        if: inputs.install-quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          tinytex: true
+
+      # renv flavor (Quarto books / projects pinned with renv) ...
+      - name: Restore renv
+        if: inputs.setup-r && inputs.use-renv
+        uses: r-lib/actions/setup-renv@v2
+        with:
+          cache-version: ${{ inputs.renv-cache-version }}
+
+      # ... vs DESCRIPTION-based flavor (R packages). Installs the package's
+      # own deps (`local::.`) plus the tools Claude runs for the pre-commit
+      # checklist.
+      - name: Install R dependencies
+        if: inputs.setup-r && !inputs.use-renv
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: ${{ inputs.r-extra-packages }}
+          needs: check
+
+      # Record the PR's head SHA before Claude runs (PR triggers only), so the
+      # post-steps can tell whether Claude pushed new commits.
+      - name: Capture PR head SHA before Claude
+        id: head_before
+        if: github.event.pull_request.number || github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          SHA=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.head.sha')
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      # Check out the PR's head branch for PR-context triggers. None of the
+      # events this workflow listens on are `pull_request` events, so the
+      # checkout above landed on the default branch — any commit Claude makes
+      # would otherwise be stranded there and lost at runner cleanup.
+      - name: Checkout PR branch
+        id: pr_checkout
+        if: github.event.pull_request.number || github.event.issue.pull_request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          gh pr checkout "$PR_NUMBER"
+          echo "branch=$(git rev-parse --abbrev-ref HEAD)" >> "$GITHUB_OUTPUT"
+          echo "starting_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Create a feature branch for issue triggers so Claude's commits land
+      # somewhere durable (agent mode skips the action's built-in setup-branch
+      # step). The finalize post-step pushes it. If an open PR for this issue
+      # already exists (a prior @claude run, or an assign-then-comment double
+      # trigger), adopt its branch instead of creating a second one — branches
+      # are `claude/issue-<N>-<ts>`, so a `claude/issue-<N>-` prefix matches.
+      - name: Set up branch for issue trigger
+        id: issue_branch
+        if: |
+          github.event_name == 'issues' ||
+          (github.event_name == 'issue_comment' && !github.event.issue.pull_request)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          EXISTING=$(gh pr list --state open --json number,url,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("claude/issue-'"$ISSUE_NUMBER"'-"))][0] // empty')
+          if [ -n "$EXISTING" ]; then
+            PR_NUM=$(echo "$EXISTING" | jq -r '.number')
+            BRANCH=$(echo "$EXISTING" | jq -r '.headRefName')
+            echo "Adopting existing PR #$PR_NUM ($BRANCH) for issue #$ISSUE_NUMBER"
+            gh pr checkout "$PR_NUM"
+            echo "existing_pr=$(echo "$EXISTING" | jq -r '.url')" >> "$GITHUB_OUTPUT"
+          else
+            BRANCH="claude/issue-${ISSUE_NUMBER}-$(date -u +%Y%m%d-%H%M%S)"
+            git checkout -b "$BRANCH"
+            echo "Created and switched to $BRANCH"
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "starting_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # eager-pr: open the draft PR BEFORE Claude runs (mirrors GitHub Copilot's
+      # assign-to-PR flow) so there's an immediate PR to watch. An empty seed
+      # commit gives the branch something to open a PR from; the finalize step
+      # closes the PR again if Claude commits nothing. Skipped when a PR for
+      # this issue already exists (adopted above) — that one is reused.
+      - name: Open draft PR up front for issue trigger
+        id: eager_pr
+        if: |
+          inputs.eager-pr &&
+          steps.issue_branch.outputs.branch != '' &&
+          steps.issue_branch.outputs.existing_pr == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.issue_branch.outputs.branch }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "Start @claude work on #${ISSUE_NUMBER}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" "$BRANCH"
+          PR_BODY=$(printf 'Draft PR opened by `@claude` to address #%s (work in progress).\n\nTriggered by [workflow run](%s).\n\nAddresses #%s.\n' \
+            "$ISSUE_NUMBER" "$RUN_URL" "$ISSUE_NUMBER")
+          PR_TITLE="${ISSUE_TITLE:-Claude response to issue #${ISSUE_NUMBER}}"
+          PR_URL=$(gh pr create \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "$BRANCH" \
+            --draft \
+            --title "$PR_TITLE" \
+            --body "$PR_BODY")
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          echo "seed_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+            --body "Opened draft PR up front: ${PR_URL} — Claude is working on it now." \
+            || echo "::warning::Could not post up-front PR link."
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        # GH_TOKEN authenticates the `gh` commands granted in claude-args
+        # (gh pr view/diff/edit, gh issue view, gh api); without it `gh`
+        # prompts and fails in CI.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: ${{ inputs.claude-args }}
+
+          # Setting `prompt:` puts the action in AGENT mode (see header). The
+          # triggering comment/issue body is already supplied by the action's
+          # default prompt; this adds the workflow's own operating instructions.
+          prompt: |
+            You were triggered by an @claude mention in a
+            ${{ github.event_name }} event. Address the request in the
+            triggering comment / issue / review.
+
+            **Before declaring the task complete, check for additional @claude
+            requests that arrived after the triggering event:**
+
+            1. Fetch the latest activity. Always check the issue/PR
+               conversation; on a PR also check review comments and reviews
+               (a follow-up `@claude` can land in any of them):
+               - `gh api 'repos/${{ github.repository }}/issues/${{ github.event.issue.number || github.event.pull_request.number }}/comments' --paginate`
+               - PRs only: `gh api 'repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number || github.event.issue.number }}/comments' --paginate`
+               - PRs only: `gh api 'repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number || github.event.issue.number }}/reviews' --paginate`
+            2. Identify entries where ALL of: `created_at` (reviews use
+               `submitted_at`) is strictly later than the triggering event;
+               `body` contains `@claude`; and `user.login` is neither
+               `claude[bot]` nor `github-actions[bot]`.
+            3. Address each match in this same session (chronological order),
+               then repeat from step 1. Stop when none remain.
+
+            Git & PR handling (a workflow step does the pushing/PR-opening,
+            not you):
+            - **Issue triggers**: a `claude/issue-N-<timestamp>` branch has
+              already been created and checked out for you. Make your edits and
+              `git commit` them. Do NOT create another branch and do NOT run
+              `gh pr create` — a post-step pushes the branch and opens (or, if a
+              draft PR is already open, updates) the PR linking back to the issue.
+            - **PR triggers**: the PR's head branch is already checked out for
+              you. Make your edits and `git commit` them. Do NOT push — a
+              post-step pushes your commits when the head SHA moves.
+
+            If your reply is **prose** (answering a question, a recommendation,
+            a review) rather than a code change, write your final message as
+            the reply you want posted on the thread — a post-step posts it as a
+            comment when you didn't commit code.
+
+            For an explicit `@claude review` request, do NOT post your own
+            review; a post-step dispatches the dedicated code-review workflow
+            instead.
+            ${{ inputs.prompt-addendum }}
+
+      # Push the commits Claude made on the PR branch (the agent isn't granted
+      # `git push`). A same-repo non-fast-forward failure would silently DROP
+      # commits, so let it fail loudly; a fork's branch lives elsewhere (this
+      # token can't push there), which is an expected warning.
+      - name: Push PR branch if Claude committed
+        if: always() && steps.pr_checkout.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.pr_checkout.outputs.branch }}
+          STARTING_SHA: ${{ steps.pr_checkout.outputs.starting_sha }}
+        run: |
+          CURRENT_SHA=$(git rev-parse HEAD)
+          if [ "$CURRENT_SHA" = "$STARTING_SHA" ]; then
+            echo "No new commits on the PR branch; nothing to push."
+            exit 0
+          fi
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          HEAD_REPO=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.head.repo.full_name')
+          if [ "$HEAD_REPO" != "${{ github.repository }}" ]; then
+            echo "::warning::PR #$PR_NUMBER is from fork '$HEAD_REPO'; cannot push Claude's commits there."
+            exit 0
+          fi
+          echo "Pushing PR branch commits ($STARTING_SHA -> $CURRENT_SHA) to $BRANCH"
+          # Explicit token URL: after `gh pr checkout` the persisted checkout
+          # credential isn't reliably applied, so `git push origin` falls back
+          # to unsupported password auth. The x-access-token URL always works.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" "HEAD:$BRANCH"
+
+      - name: Capture PR head SHA after Claude
+        id: head_after
+        if: always() && (github.event.pull_request.number || github.event.issue.pull_request)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          SHA=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.head.sha')
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      # Surface Claude's final prose reply when it didn't commit code (agent
+      # mode discards it otherwise). Skipped on `@claude review` with PR
+      # context, since the dispatch step below routes that to the reviewer.
+      - name: Post Claude's response if no code was committed
+        if: |
+          always() &&
+          steps.claude.outcome == 'success' &&
+          !(
+            (
+              contains(github.event.comment.body, '@claude review') ||
+              contains(github.event.review.body, '@claude review')
+            ) &&
+            (github.event.pull_request.number || github.event.issue.pull_request)
+          )
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENTITY_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          ISSUE_BRANCH: ${{ steps.issue_branch.outputs.branch }}
+          # Baseline for issue triggers: the eager-pr seed commit if we opened a
+          # PR up front, else the branch's starting point.
+          ISSUE_BASELINE_SHA: ${{ steps.eager_pr.outputs.seed_sha || steps.issue_branch.outputs.starting_sha }}
+          PR_HEAD_BEFORE: ${{ steps.head_before.outputs.sha }}
+          PR_HEAD_AFTER: ${{ steps.head_after.outputs.sha }}
+        run: |
+          # Did Claude commit anything? Issue triggers: $BRANCH tip vs the
+          # baseline (seed commit or branch start) — measure the branch, not
+          # HEAD, in case the agent detached. PR triggers: PR head SHA before
+          # vs after. A non-empty "after" is required so a failed fetch isn't
+          # misread as "committed" (which would wrongly suppress the post).
+          COMMITTED=false
+          if [ -n "$ISSUE_BRANCH" ] && [ -n "$ISSUE_BASELINE_SHA" ]; then
+            [ "$(git rev-parse "$ISSUE_BRANCH")" != "$ISSUE_BASELINE_SHA" ] && COMMITTED=true
+          fi
+          if [ -n "$PR_HEAD_BEFORE" ] && [ -n "$PR_HEAD_AFTER" ] && [ "$PR_HEAD_AFTER" != "$PR_HEAD_BEFORE" ]; then
+            COMMITTED=true
+          fi
+          if [ "$COMMITTED" = "true" ]; then
+            echo "Claude committed code; commits are the deliverable, skipping response-text post."
+            exit 0
+          fi
+
+          FILE="${EXECUTION_FILE:-/home/runner/work/_temp/claude-execution-output.json}"
+          if [ ! -f "$FILE" ]; then
+            echo "::warning::No Claude execution output at $FILE; nothing to post."
+            exit 0
+          fi
+          # execution_file is a single JSON array of event objects. flatten(1)
+          # collapses the slurp wrap; the type=="object" guard skips non-objects.
+          RESPONSE=$(jq -rs '
+            flatten(1)
+            | [.[] | select(type == "object" and .type == "assistant")]
+            | last
+            | (.message.content // [])
+            | map(select(.type == "text") | .text)
+            | join("\n\n")
+          ' < "$FILE")
+          if [ -z "$RESPONSE" ] || [ "$RESPONSE" = "null" ]; then
+            echo "::warning::No assistant text content; nothing to post."
+            exit 0
+          fi
+
+          # GitHub comment bodies cap at 65,536 bytes; truncate by bytes and
+          # run through `iconv -c` to drop a trailing partial multibyte char.
+          MAX_LEN=60000
+          BYTE_LEN=$(printf '%s' "$RESPONSE" | wc -c)
+          if [ "$BYTE_LEN" -gt "$MAX_LEN" ]; then
+            RESPONSE="$(printf '%s' "$RESPONSE" | head -c "$MAX_LEN" | iconv -f UTF-8 -t UTF-8 -c)
+
+          … (response truncated at ${MAX_LEN} bytes; full text in the [workflow run](${RUN_URL}))"
+          fi
+
+          gh issue comment "$ENTITY_NUMBER" --repo "${{ github.repository }}" \
+            --body "$(printf '%s\n\n<sub>— posted by @claude post-step from [workflow run](%s)</sub>\n' "$RESPONSE" "$RUN_URL")" \
+            || echo "::warning::Could not post Claude's response back to the source thread."
+
+      # Route an explicit `@claude review` request to the dedicated reviewer
+      # workflow rather than letting the agent self-review.
+      - name: Dispatch code review on @claude review comment
+        if: |
+          always() &&
+          (github.event.pull_request.number || github.event.issue.pull_request) &&
+          (
+            contains(github.event.comment.body, '@claude review') ||
+            contains(github.event.review.body, '@claude review')
+          )
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVIEW_WF: ${{ inputs.review-workflow-file }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          echo "Dispatching $REVIEW_WF for PR #$PR_NUMBER (@claude review comment)."
+          gh workflow run "$REVIEW_WF" -f pr_number="$PR_NUMBER" \
+            || echo "::warning::Could not dispatch $REVIEW_WF; review will not auto-run."
+
+      # When Claude pushed new commits to a PR, re-request the standing
+      # reviewer and dispatch a fresh code review. GITHUB_TOKEN-driven pushes
+      # don't fire `synchronize`, so the review wouldn't auto-trigger otherwise.
+      - name: Re-request review and dispatch code review if Claude pushed commits
+        if: always() && (github.event.pull_request.number || github.event.issue.pull_request) && steps.head_before.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA_BEFORE: ${{ steps.head_before.outputs.sha }}
+          SHA_AFTER: ${{ steps.head_after.outputs.sha }}
+          REVIEWER: ${{ inputs.reviewer }}
+          REVIEW_WF: ${{ inputs.review-workflow-file }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          echo "before=$SHA_BEFORE  after=$SHA_AFTER"
+          if [ -n "$SHA_AFTER" ] && [ "$SHA_AFTER" != "$SHA_BEFORE" ]; then
+            echo "Claude pushed new commits; re-requesting reviewer and dispatching code review."
+            if [ -n "$REVIEWER" ]; then
+              gh api -X POST "repos/${{ github.repository }}/pulls/$PR_NUMBER/requested_reviewers" -f "reviewers[]=$REVIEWER" \
+                || echo "::warning::Could not re-request $REVIEWER as reviewer."
+            fi
+            gh workflow run "$REVIEW_WF" -f pr_number="$PR_NUMBER" \
+              || echo "::warning::Could not dispatch $REVIEW_WF."
+          else
+            echo "No new commits on PR head; skipping review dispatch."
+          fi
+
+      # Pair to "Set up branch for issue trigger": push Claude's commits and, in
+      # lazy mode, open the draft PR. In eager-pr mode (or when a PR was adopted
+      # for this issue) the PR already exists — push the new commits and dispatch
+      # a review, or close the empty up-front PR if Claude produced nothing.
+      # Runs on always() so partial work is preserved even if Claude failed.
+      - name: Push branch and finalize PR for issue trigger
+        if: |
+          always() &&
+          steps.issue_branch.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.issue_branch.outputs.branch }}
+          STARTING_SHA: ${{ steps.issue_branch.outputs.starting_sha }}
+          SEED_SHA: ${{ steps.eager_pr.outputs.seed_sha }}
+          EAGER_PR_URL: ${{ steps.eager_pr.outputs.pr_url }}
+          EXISTING_PR_URL: ${{ steps.issue_branch.outputs.existing_pr }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REVIEW_WF: ${{ inputs.review-workflow-file }}
+        run: |
+          # Measure the tip of $BRANCH (not HEAD): the agent has git checkout/
+          # switch in its toolset, so a stray detach would make HEAD diverge
+          # from the branch we actually push.
+          CURRENT_SHA=$(git rev-parse "$BRANCH")
+          # Baseline for "did Claude commit?": the seed commit in eager mode,
+          # else the branch's starting point.
+          BASELINE="${SEED_SHA:-$STARTING_SHA}"
+          # A PR already exists when we opened one up front (eager) or adopted
+          # an open PR for this issue.
+          PR_URL="${EAGER_PR_URL:-$EXISTING_PR_URL}"
+
+          if [ "$CURRENT_SHA" = "$BASELINE" ]; then
+            echo "No new commits from Claude on $BRANCH."
+            if [ -n "$EAGER_PR_URL" ]; then
+              # We opened an empty draft PR up front; close it (and its branch)
+              # so a prose-only / no-op run doesn't leave clutter behind.
+              echo "Closing empty up-front draft PR $EAGER_PR_URL"
+              gh pr close "$EAGER_PR_URL" --delete-branch \
+                --comment "Closing: \`@claude\` produced no code changes for #${ISSUE_NUMBER}." \
+                || echo "::warning::Could not close empty draft PR $EAGER_PR_URL."
+            fi
+            exit 0
+          fi
+
+          echo "Pushing $BRANCH ($BASELINE -> $CURRENT_SHA)"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" "$BRANCH"
+
+          if [ -z "$PR_URL" ]; then
+            # Lazy mode, first run: open the draft PR now that there are commits.
+            # "Addresses #N" (not "Closes #N") is deliberate: this is a draft of
+            # Claude's attempt and may not fully resolve the issue, so merging it
+            # should not auto-close the issue.
+            PR_BODY=$(printf 'Draft PR opened by `@claude` to address #%s.\n\nTriggered by [workflow run](%s).\n\nAddresses #%s.\n' \
+              "$ISSUE_NUMBER" "$RUN_URL" "$ISSUE_NUMBER")
+            PR_TITLE="${ISSUE_TITLE:-Claude response to issue #${ISSUE_NUMBER}}"
+            PR_URL=$(gh pr create \
+              --base "${{ github.event.repository.default_branch }}" \
+              --head "$BRANCH" \
+              --draft \
+              --title "$PR_TITLE" \
+              --body "$PR_BODY")
+            PR_VERB="opened draft PR"
+          else
+            PR_VERB="pushed new commits to draft PR"
+          fi
+          # Dispatch a review on the new commits (the review's own concurrency
+          # group dedupes a redundant dispatch).
+          gh workflow run "$REVIEW_WF" -f pr_number="${PR_URL##*/}" \
+            || echo "::warning::Could not dispatch $REVIEW_WF."
+          gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" \
+            --body "Pushed Claude's commits to \`${BRANCH}\` and ${PR_VERB}: ${PR_URL}" \
+            || echo "::warning::Could not post PR link as issue comment."
