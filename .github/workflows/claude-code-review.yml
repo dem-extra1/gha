@@ -188,7 +188,8 @@ jobs:
           | while IFS=$'\t' read -r NODE_ID COMMENT_ID RUN_ID; do
               [ "$RUN_ID" = "$CURRENT_RUN_ID" ] || continue
               echo "Annotating and folding canceled tracking comment $COMMENT_ID (run $RUN_ID)"
-              BODY=$(gh api "repos/$REPO/issues/comments/$COMMENT_ID" --jq '.body')
+              BODY=$(gh api "repos/$REPO/issues/comments/$COMMENT_ID" --jq '.body') \
+                || { echo "::warning::Could not fetch body for comment $COMMENT_ID; skipping."; continue; }
               gh api -X PATCH "repos/$REPO/issues/comments/$COMMENT_ID" -f body="${NOTE}${BODY}" \
                 || echo "::warning::Could not update canceled tracking comment $COMMENT_ID."
               gh api graphql -f query='
