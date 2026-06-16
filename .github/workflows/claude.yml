@@ -309,7 +309,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit --allow-empty -m "Start @claude work on #${ISSUE_NUMBER}"
           git push "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git" "$BRANCH"
-          PR_BODY=$(printf 'Draft PR opened by `@claude` to address #%s (work in progress).\n\nTriggered by [workflow run](%s).\n\nAddresses #%s.\n' \
+          PR_BODY=$(printf 'PR opened by `@claude` to address #%s (work in progress).\n\nTriggered by [workflow run](%s).\n\nAddresses #%s.\n' \
             "$ISSUE_NUMBER" "$RUN_URL" "$ISSUE_NUMBER")
           PR_TITLE="${ISSUE_TITLE:-Claude response to issue #${ISSUE_NUMBER}}"
           PR_URL=$(gh pr create \
@@ -607,7 +607,7 @@ jobs:
             # "Addresses #N" (not "Closes #N") is deliberate: this is a draft of
             # Claude's attempt and may not fully resolve the issue, so merging it
             # should not auto-close the issue.
-            PR_BODY=$(printf 'Draft PR opened by `@claude` to address #%s.\n\nTriggered by [workflow run](%s).\n\nAddresses #%s.\n' \
+            PR_BODY=$(printf 'PR opened by `@claude` to address #%s.\n\nTriggered by [workflow run](%s).\n\nAddresses #%s.\n' \
               "$ISSUE_NUMBER" "$RUN_URL" "$ISSUE_NUMBER")
             PR_TITLE="${ISSUE_TITLE:-Claude response to issue #${ISSUE_NUMBER}}"
             PR_URL=$(gh pr create \
