@@ -68,6 +68,8 @@ that need to write must have the **caller** grant it on the calling job:
   them without the `workflows` scope), so set `WORKFLOW_TOKEN` to a PAT or
   GitHub App token with `contents:write` + `workflows:write`. Repos that never
   touch `.github/workflows/` can omit it — pushes fall back to `GITHUB_TOKEN`.
+  Note that, unlike `GITHUB_TOKEN`, a PAT/App-token push **does** trigger other
+  `push`-based workflows, so enabling `WORKFLOW_TOKEN` can set off extra CI runs.
 - `claude-code-review` (read-only review) → grant `contents: read`,
   `pull-requests: write`, `issues: write`, `id-token: write`, and the
   `CLAUDE_CODE_OAUTH_TOKEN` secret.
