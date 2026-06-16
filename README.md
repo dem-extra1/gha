@@ -46,7 +46,7 @@ Pin to `@v1` (a moving major tag updated as fixes land). Do not reference
 | `summary.yml` | AI summary comment on newly opened issues | — |
 | `check-news.yml` | Enforce a `NEWS.md` changelog entry on PRs (wraps `UCD-SERG/changelog-check-action`) | `changelog` |
 | `claude.yml` | Agent-mode Claude Code bot: responds to `@claude` mentions, edits files, opens/updates PRs | `setup-r`, `install-quarto`, `use-renv`, `eager-pr`, `prompt-addendum`, `reviewer` |
-| `claude-code-review.yml` | Read-only Claude PR review (runs the `code-review` plugin, posts inline findings) | `pr-number`, `prompt-addendum` |
+| `claude-code-review.yml` | Read-only Claude PR review (runs the `code-review` plugin; inline findings on `pull_request` runs, consolidated summary on dispatched runs) | `pr-number`, `prompt-addendum` |
 
 ## Permissions
 
@@ -63,6 +63,13 @@ that need to write must have the **caller** grant it on the calling job:
 - `claude` (pushes branches, opens PRs, dispatches the review workflow) → grant
   `contents: write`, `pull-requests: write`, `issues: write`, `id-token: write`,
   `actions: write`, and add the `CLAUDE_CODE_OAUTH_TOKEN` secret.
+  - **Optional:** if Claude will edit files under `.github/workflows/`, also add
+    a `WORKFLOW_TOKEN` secret (a PAT or GitHub App token with `contents:write` +
+    `workflows:write`). The integrated `GITHUB_TOKEN` cannot push workflow-file
+    changes — GitHub rejects them without the `workflows` scope. Repos that never
+    touch `.github/workflows/` can omit it; pushes fall back to `GITHUB_TOKEN`.
+    Note that, unlike `GITHUB_TOKEN`, a PAT/App-token push **does** trigger other
+    `push`-based workflows, so enabling `WORKFLOW_TOKEN` can set off extra CI runs.
 - `claude-code-review` (read-only review) → grant `contents: read`,
   `pull-requests: write`, `issues: write`, `id-token: write`, and the
   `CLAUDE_CODE_OAUTH_TOKEN` secret.
