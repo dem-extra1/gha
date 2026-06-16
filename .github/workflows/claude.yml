@@ -21,9 +21,9 @@ name: Claude Code (reusable)
 #     (questions/reviews) that agent mode would otherwise discard.
 #   - "Dispatch <review-workflow-file> on @claude review" routes review
 #     requests to the dedicated reviewer instead of self-reviewing.
-#   - When Claude finishes successfully with committed code, the push/finalize
-#     steps take the draft PR out of draft (mark-ready-for-review) so a human
-#     knows it is ready to review.
+#   - When Claude finishes successfully with committed code, the post-steps
+#     take the draft PR out of draft (mark-ready-for-review) so a human knows
+#     it is ready to review.
 
 on:
   workflow_call:
