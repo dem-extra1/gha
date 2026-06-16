@@ -62,7 +62,12 @@ that need to write must have the **caller** grant it on the calling job:
   (the default), so no `permissions:` block is needed.
 - `claude` (pushes branches, opens PRs, dispatches the review workflow) → grant
   `contents: write`, `pull-requests: write`, `issues: write`, `id-token: write`,
-  `actions: write`, and add the `CLAUDE_CODE_OAUTH_TOKEN` secret.
+  `actions: write`, and add the `CLAUDE_CODE_OAUTH_TOKEN` secret. If Claude will
+  edit files under `.github/workflows/`, also add a `WORKFLOW_TOKEN` secret: the
+  integrated `GITHUB_TOKEN` cannot push workflow-file changes (GitHub rejects
+  them without the `workflows` scope), so set `WORKFLOW_TOKEN` to a PAT or
+  GitHub App token with `contents:write` + `workflows:write`. Repos that never
+  touch `.github/workflows/` can omit it — pushes fall back to `GITHUB_TOKEN`.
 - `claude-code-review` (read-only review) → grant `contents: read`,
   `pull-requests: write`, `issues: write`, `id-token: write`, and the
   `CLAUDE_CODE_OAUTH_TOKEN` secret.
