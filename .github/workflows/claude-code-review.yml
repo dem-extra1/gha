@@ -132,9 +132,14 @@ jobs:
 
             If the inline-comment tool isn't available in this environment
             (dispatched reviews run in agent mode without it — see
-            claude-code-action #635), don't announce that and don't drop the
-            findings: put every finding in the top-level summary comment
-            instead, grouped by file with `path:line` anchors.
+            claude-code-action #635), or if posting an inline comment fails
+            with a permission error (e.g. a 403 "Resource not accessible by
+            integration"), don't drop the findings: put every finding in the
+            top-level summary comment instead, grouped by file with `path:line`
+            anchors. Don't announce a tool that's simply missing in agent mode,
+            but when the cause is a permission error, add a one-line footnote at
+            the bottom of the summary so the failure is diagnosable:
+            `> ℹ️ Inline comments were unavailable (permission error); findings appear above with path:line anchors.`
             ${{ inputs.prompt-addendum }}
           # `track_progress` forces tag mode, which guarantees a tracking
           # comment even when the plugin scores the PR below its post
