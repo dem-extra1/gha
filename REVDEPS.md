@@ -11,6 +11,7 @@ Repos that call `d-morrison/gha` reusable workflows from their
 > those owners is the quickest way to find current callers:
 >
 > ```bash
+> # Requires an authenticated gh (run `gh auth login`, or set GH_TOKEN).
 > gh search code 'uses: d-morrison/gha/.github/workflows' --owner d-morrison --owner ucdavis --owner UCD-SERG --owner UCLA-PHP --owner UCD-IDDRC
 > ```
 
