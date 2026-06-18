@@ -39,6 +39,7 @@ This repo is `d-morrison/gha`, so MCP calls use `owner: d-morrison`, `repo: gha`
 | `gh issue list` / `gh issue view <n>` | `mcp__github__list_issues` / `mcp__github__issue_read` |
 | read a file / repo contents | `mcp__github__get_file_contents` |
 | CI runs & job logs | `mcp__github__actions_list`, `mcp__github__actions_get`, `mcp__github__get_job_logs` |
+| watch / stop watching PR activity | `mcp__github__subscribe_pr_activity` / `mcp__github__unsubscribe_pr_activity` |
 | `glab mr ...` (GitLab) | N/A — this repo is on GitHub; use the tools above |
 
 Posting inline comments requires a **pending review to already exist** before
