@@ -79,9 +79,10 @@ on:
           project skills (symlinked to .claude/skills) so an "@claude <skill>"
           mention can invoke them by name. Off by default; turn on for repos
           (e.g. ai-config) that ship a skills/ dir meant for the bot.
+
           CAVEAT: on PR-triggered runs, claude-code-action's
           restoreConfigFromBase wipes .claude/ and restores it from the base
-          branch BEFORE Claude starts, which deletes this runtime symlink. So
+          branch before Claude starts, which deletes this runtime symlink. So
           for PR contexts this is a no-op — commit .claude/skills -> ../skills
           to the default branch instead (the restore materializes a committed
           symlink). This step still helps non-PR (issue) triggers, where no
