@@ -14,7 +14,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Checkout submodules
+    - name: Initialize submodules
       shell: bash
       env:
         SUBMODULES_TOKEN: ${{ inputs.submodules-token }}
