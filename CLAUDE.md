@@ -8,6 +8,46 @@ Central, reusable GitHub Actions for `d-morrison` / `UCD-SERG` / `ucdavis` R-pac
 and Quarto repositories (see [`README.md`](README.md)). Each capability ships as a
 composite action plus a `workflow_call` reusable workflow. Consumers pin to `@v1`.
 
+## GitHub access in remote / web sessions
+
+Claude Code on the web (and other remote/CI sessions) runs in a sandbox where the
+`gh` and `glab` CLIs are **not installed** and there is no direct GitHub API
+access. Skills and built-in commands that tell you to "use `gh`" — `/review`,
+`/code-review --comment`, `/security-review`, `/verify`, PR babysitting, PR
+creation — only work if their GitHub steps are translated to the GitHub MCP tools
+(`mcp__github__*`). When a skill or command instructs a `gh`/`glab` command in
+such a session, substitute the equivalent MCP tool below. (In a local session
+where `gh` is on `PATH`, use `gh` as the skill describes.)
+
+This repo is `d-morrison/gha`, so MCP calls use `owner: d-morrison`, `repo: gha`.
+
+| Operation / `gh`/`glab` command | GitHub MCP equivalent |
+| --- | --- |
+| `gh pr list` | `mcp__github__list_pull_requests` |
+| `gh pr view <n>` | `mcp__github__pull_request_read` (`method: get`) |
+| `gh pr diff <n>` | `mcp__github__pull_request_read` (`method: get_diff`) |
+| changed files in a PR | `mcp__github__pull_request_read` (`method: get_files`) |
+| `gh pr status` / `gh pr checks` | `mcp__github__pull_request_read` (`method: get_status` / `get_check_runs`) |
+| `gh pr create` | `mcp__github__create_pull_request` |
+| read PR conversation comments | `mcp__github__pull_request_read` (`method: get_comments`) |
+| read inline review comments | `mcp__github__pull_request_read` (`method: get_review_comments`) — also returns `threadId`s |
+| post a top-level PR comment | `mcp__github__add_issue_comment` |
+| post inline review comments | `mcp__github__pull_request_review_write` (`method: create`, no `event`) → `mcp__github__add_comment_to_pending_review` per comment → `mcp__github__pull_request_review_write` (`method: submit_pending`) |
+| reply to a review comment | `mcp__github__add_reply_to_pull_request_comment` |
+| approve / request changes | `mcp__github__pull_request_review_write` (`method: create` with `event`) |
+| resolve a review thread | `mcp__github__pull_request_review_write` (`method: resolve_thread`, `threadId: <id from get_review_comments>`) |
+| `gh issue list` / `gh issue view <n>` | `mcp__github__list_issues` / `mcp__github__issue_read` |
+| read a file / repo contents | `mcp__github__get_file_contents` |
+| CI runs & job logs | `mcp__github__actions_list`, `mcp__github__actions_get`, `mcp__github__get_job_logs` |
+| watch / stop watching PR activity | `mcp__github__subscribe_pr_activity` / `mcp__github__unsubscribe_pr_activity` |
+| `glab mr ...` (GitLab) | N/A — this repo is on GitHub; use the tools above |
+
+Posting inline comments requires a **pending review to already exist** before
+`mcp__github__add_comment_to_pending_review`; create the pending review first, add
+each comment, then submit once at the end. Watch and respond to PR activity with
+`mcp__github__subscribe_pr_activity` / `mcp__github__unsubscribe_pr_activity` (not
+`gh pr checks --watch`).
+
 ## Code review guidelines
 
 When reviewing a pull request (e.g. via `/review`, `/code-review`, or as a Claude
