@@ -27,7 +27,9 @@ inputs:
   base-ref:
     description: >-
       Git ref/SHA to diff against; when set, only added lines are scanned. The
-      reusable workflow passes the PR base SHA automatically.
+      reusable workflow passes the PR base SHA automatically. Diff mode needs
+      the base commit in history, so check out with `fetch-depth: 0`; on a
+      shallow clone the scan falls back to the whole tree with a warning.
     default: ''
   fail:
     description: Fail the action when possible PHI is found (else warn only).

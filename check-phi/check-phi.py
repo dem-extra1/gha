@@ -38,7 +38,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 # Word-boundary match so the pragma "phi-allow" does NOT also fire on lines
 # that merely mention "phi-allowlist" (e.g. a path like .github/phi-allowlist.txt
@@ -47,14 +47,6 @@ INLINE_PRAGMA_RE = re.compile(r"\bphi-allow\b", re.IGNORECASE)
 DEFAULT_ALLOWLIST = ".github/phi-allowlist.txt"
 DEFAULT_DETECTORS = ("ssn", "mrn", "dob", "csv_phi_header")
 CSV_SUFFIXES = (".csv", ".tsv", ".psv")
-
-
-class Finding(NamedTuple):
-    path: str
-    line: int
-    col: int
-    detector: str
-    message: str
 
 
 # ── Individual detectors ────────────────────────────────────────────────────
@@ -378,7 +370,14 @@ def main() -> int:
 
     print(f"Scanning for PHI ({mode}); detectors: {', '.join(enabled)}\n")
 
-    findings: List[Finding] = []
+    level = "error" if fail else "warning"
+    hint = ("If this is synthetic/non-PHI, add a 'phi-allow' comment on the "
+            f"line or an entry in {allowlist_file or DEFAULT_ALLOWLIST}.")
+    # Stream findings as they are discovered (with `python3 -u`) instead of
+    # batching, so a large/violation-heavy scan shows progress live rather than
+    # appearing stuck; only a count + file-set are kept for the summary.
+    total = 0
+    files_hit = set()
     for path, lineno, text in rows:
         # The line is the unit of suppression: an inline `phi-allow` pragma or
         # an allowlist regex matching anywhere on the line suppresses *every*
@@ -390,22 +389,17 @@ def main() -> int:
             continue
         for name, fn in active:
             for col, message in fn(path, lineno, text):
-                findings.append(Finding(path, lineno, col, name, message))
+                # Value deliberately omitted — never echo PHI to the log.
+                print(f"::{level} file={path},line={lineno},col={col}::"
+                      f"[phi:{name}] {message} (value redacted). {hint}")
+                total += 1
+                files_hit.add(path)
 
-    level = "error" if fail else "warning"
-    for f in findings:
-        # Value deliberately omitted — never echo PHI to the log.
-        print(f"::{level} file={f.path},line={f.line},col={f.col}::"
-              f"[phi:{f.detector}] {f.message} (value redacted). "
-              f"If this is synthetic/non-PHI, add a 'phi-allow' comment on the "
-              f"line or an entry in {allowlist_file or DEFAULT_ALLOWLIST}.")
-
-    if not findings:
+    if not total:
         print("✓ No PHI-like content detected.")
         return 0
 
-    files = len({f.path for f in findings})
-    print(f"\n✗ Found {len(findings)} possible PHI item(s) in {files} file(s). "
+    print(f"\n✗ Found {total} possible PHI item(s) in {len(files_hit)} file(s). "
           f"Values are redacted above; review the listed file:line locations.")
     return 1 if fail else 0
 
