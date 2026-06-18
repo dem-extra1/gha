@@ -32,27 +32,34 @@ runs:
           any::jsonlite
           any::stringr
 
-    - name: Find bibliography files
-      id: find-bibs
-      shell: bash
-      run: |
-        set -euo pipefail
-        BIB_FILES=$(find . -name "*.bib" -not -path "./.git/*" | tr '\n' ' ')
-        echo "Found bibliography files: $BIB_FILES"
-        echo "bib_files=$BIB_FILES" >> "$GITHUB_OUTPUT"
-
     - name: Check bibliography DOIs
-      if: steps.find-bibs.outputs.bib_files != ''
       shell: bash
       env:
-        BIB_FILES: ${{ steps.find-bibs.outputs.bib_files }}
+        # BIB_EXCLUDE_KEYS is read by check-bibliography-dois.R via Sys.getenv();
+        # NO_METADATA_CHECK is read by this shell step below and turned into the
+        # --no-metadata-check CLI flag the R script parses from commandArgs().
         BIB_EXCLUDE_KEYS: ${{ inputs.exclude-keys }}
         NO_METADATA_CHECK: ${{ inputs.no-metadata-check }}
       run: |
         set -euo pipefail
-        ARGS=""
-        if [ "$NO_METADATA_CHECK" = "true" ]; then ARGS="--no-metadata-check"; fi
-        Rscript "$GITHUB_ACTION_PATH/check-bibliography-dois.R" $ARGS $BIB_FILES
+
+        # Collect .bib files NUL-delimited into an array so paths containing
+        # spaces survive as single arguments to Rscript.
+        BIB_FILES=()
+        while IFS= read -r -d '' bib; do
+          BIB_FILES+=("$bib")
+        done < <(find . -name "*.bib" -not -path "./.git/*" -print0)
+
+        if [ "${#BIB_FILES[@]}" -eq 0 ]; then
+          echo "No bibliography (.bib) files found; nothing to check."
+          exit 0
+        fi
+        echo "Found ${#BIB_FILES[@]} bibliography file(s):"
+        printf '  %s\n' "${BIB_FILES[@]}"
+
+        ARGS=()
+        if [ "$NO_METADATA_CHECK" = "true" ]; then ARGS+=("--no-metadata-check"); fi
+        Rscript "$GITHUB_ACTION_PATH/check-bibliography-dois.R" "${ARGS[@]}" "${BIB_FILES[@]}"
 
     - name: Summary
       if: success()

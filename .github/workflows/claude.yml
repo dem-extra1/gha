@@ -219,24 +219,14 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      # Private submodules need a token with read access; when SUBMODULES_TOKEN
-      # is set, the URL rewrite authenticates the clone. Without a token,
-      # submodules clone anonymously (public ones work; a private one fails
-      # naturally at checkout).
+      # Initialize submodules so Claude can read their contents. The shared
+      # composite action handles the SUBMODULES_TOKEN insteadOf rewrite and the
+      # anonymous fallback; see .github/actions/checkout-submodules.
       - name: Checkout submodules
         if: inputs.checkout-submodules
-        env:
-          SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
-        run: |
-          # With a token, rewrite submodule URLs to authenticate the clone.
-          # Without one, warn and proceed: public submodules clone anonymously,
-          # and a truly private submodule will fail naturally at checkout.
-          if [ -z "$SUBMODULES_TOKEN" ]; then
-            echo "::warning::SUBMODULES_TOKEN is empty; cloning submodules anonymously (works for public submodules only)."
-          else
-            git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/".insteadOf "https://github.com/"
-          fi
-          git submodule update --init --recursive --depth 1
+        uses: d-morrison/gha/.github/actions/checkout-submodules@v1
+        with:
+          submodules-token: ${{ secrets.SUBMODULES_TOKEN }}
 
       # System libraries some R/Quarto packages need to compile or run (e.g.
       # jags, libglpk-dev, poppler-utils). Runs before R setup so renv/
