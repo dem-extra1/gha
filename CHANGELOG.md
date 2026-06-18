@@ -17,6 +17,10 @@ below with migration steps.
   consumers can see what they picked up.
 - `REVDEPS.md` — tracks repos that consume these workflows so breaking changes
   can be announced. See the file for how to register.
+- `.github/actions/checkout-submodules` composite action — centralizes the
+  submodule-init logic (the `SUBMODULES_TOKEN` `insteadOf` rewrite and the
+  anonymous-clone fallback) shared by the `claude` and `claude-code-review`
+  reusable workflows (#25).
 
 ### Changed
 
@@ -24,6 +28,12 @@ below with migration steps.
   declare `set -euo pipefail` explicitly. GitHub already runs `shell: bash`
   with `-eo pipefail`; the net new protection is `nounset` (unset-variable
   typos now fail fast), plus consistency with the rest of the script logic.
+- `claude` and `claude-code-review` no longer carry duplicate `Checkout
+  submodules` steps; both call the shared `checkout-submodules` action instead,
+  so the token-rewrite logic lives in one place (#25).
+- `check-bibliography-dois` now collects `.bib` files NUL-delimited into a bash
+  array, so bibliography paths containing spaces are passed to the checker as
+  intact single arguments instead of word-splitting (#30).
 
 ## [v1] — initial pilot set
 

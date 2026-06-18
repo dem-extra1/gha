@@ -82,23 +82,14 @@ jobs:
 
       # Initialize submodules so the reviewer can read their contents — without
       # this, reviews of files that include or reference a submodule report it
-      # as "not initialized". When SUBMODULES_TOKEN is set, the insteadOf rule
-      # authenticates the clone (the default GITHUB_TOKEN can't read private
-      # submodules); otherwise submodules clone anonymously.
+      # as "not initialized". The shared composite action handles the
+      # SUBMODULES_TOKEN insteadOf rewrite and the anonymous fallback; see
+      # .github/actions/checkout-submodules.
       - name: Checkout submodules
         if: inputs.checkout-submodules
-        env:
-          SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
-        run: |
-          # With a token, rewrite submodule URLs to authenticate the clone.
-          # Without one, warn and proceed: public submodules clone anonymously,
-          # and a truly private submodule will fail naturally at checkout.
-          if [ -z "$SUBMODULES_TOKEN" ]; then
-            echo "::warning::SUBMODULES_TOKEN is empty; cloning submodules anonymously (works for public submodules only)."
-          else
-            git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/".insteadOf "https://github.com/"
-          fi
-          git submodule update --init --recursive --depth 1
+        uses: d-morrison/gha/.github/actions/checkout-submodules@v1
+        with:
+          submodules-token: ${{ secrets.SUBMODULES_TOKEN }}
 
       # Clear the human reviewers before Claude runs so they aren't notified
       # mid-run, then re-add them when Claude finishes so the re-add fires a
