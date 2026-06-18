@@ -204,9 +204,9 @@ jobs:
           submodules: false
 
       # Private submodules need a token with read access; when SUBMODULES_TOKEN
-      # is set, the URL rewrite passes it through `git submodule update`.
-      # Without a token, submodules clone anonymously (public ones work; a
-      # private one fails naturally at checkout).
+      # is set, the URL rewrite authenticates the clone. Without a token,
+      # submodules clone anonymously (public ones work; a private one fails
+      # naturally at checkout).
       - name: Checkout submodules
         if: inputs.checkout-submodules
         env:
