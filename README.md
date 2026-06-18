@@ -73,9 +73,10 @@ that need to write must have the **caller** grant it on the calling job:
 - `claude-code-review` (read-only review) → grant `contents: read`,
   `pull-requests: write`, `issues: write`, `id-token: write`, and the
   `CLAUDE_CODE_OAUTH_TOKEN` secret.
-  - **Optional:** set `checkout-submodules: true` (and add a `SUBMODULES_TOKEN`
-    secret) so the reviewer can read submodule contents instead of reporting
-    them as uninitialized.
+  - **Optional:** set `checkout-submodules: true` so the reviewer can read
+    submodule contents instead of reporting them as uninitialized. Public
+    submodules clone anonymously; private ones additionally need a
+    `SUBMODULES_TOKEN` secret.
 
 The stubs in [`examples/`](examples) already include the right `permissions:`
 blocks — copy them as-is.
