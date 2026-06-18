@@ -26,6 +26,12 @@ runs:
         if [ -z "$SUBMODULES_TOKEN" ]; then
           echo "::warning::SUBMODULES_TOKEN is empty; cloning submodules anonymously (works for public submodules only)."
         else
+          # --global (not --local) is intentional: the rewrite must also apply
+          # to the nested clones from `--recursive`, which run in each
+          # submodule's own repo context and would not see a superproject-local
+          # insteadOf. It only rewrites HTTPS github.com clones and lives only
+          # on this job's ephemeral runner (~/.gitconfig), so it does not leak
+          # beyond the job.
           git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/".insteadOf "https://github.com/"
         fi
         git submodule update --init --recursive --depth 1

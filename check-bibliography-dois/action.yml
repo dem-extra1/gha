@@ -35,6 +35,9 @@ runs:
     - name: Check bibliography DOIs
       shell: bash
       env:
+        # BIB_EXCLUDE_KEYS is read by check-bibliography-dois.R via Sys.getenv();
+        # NO_METADATA_CHECK is read by this shell step below and turned into the
+        # --no-metadata-check CLI flag the R script parses from commandArgs().
         BIB_EXCLUDE_KEYS: ${{ inputs.exclude-keys }}
         NO_METADATA_CHECK: ${{ inputs.no-metadata-check }}
       run: |
@@ -51,7 +54,8 @@ runs:
           echo "No bibliography (.bib) files found; nothing to check."
           exit 0
         fi
-        printf 'Found bibliography file: %s\n' "${BIB_FILES[@]}"
+        echo "Found ${#BIB_FILES[@]} bibliography file(s):"
+        printf '  %s\n' "${BIB_FILES[@]}"
 
         ARGS=()
         if [ "$NO_METADATA_CHECK" = "true" ]; then ARGS+=("--no-metadata-check"); fi
