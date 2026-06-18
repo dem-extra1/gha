@@ -65,7 +65,14 @@ blocks — copy them as-is.
 ## Versioning
 
 Releases are tagged `vX.Y.Z`; the `vX` major tag moves to the latest compatible
-release. Consumers reference `@v1`.
+release. Consumers reference `@v1`. See [`CHANGELOG.md`](CHANGELOG.md) for what
+changes as the `@v1` tag moves and for any breaking-change migration steps.
+
+## Reverse dependencies
+
+[`REVDEPS.md`](REVDEPS.md) tracks repos that call these workflows, so consumers
+can be notified before a breaking change. If your repo uses `gha`, please add
+it there.
 
 ## Notes for private consumers
 
