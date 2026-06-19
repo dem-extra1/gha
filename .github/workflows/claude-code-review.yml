@@ -219,8 +219,17 @@ jobs:
       # review comments are touched — identified by the run each comment links
       # to (its workflow `path` is this file) — so `@claude` task comments from
       # claude.yml (same `claude[bot]` author) are left alone.
+      #
+      # Not gated to pull_request: a dispatched (workflow_dispatch / agent-mode)
+      # review that wins the per-PR concurrency race must fold the earlier
+      # pushes' review comments too, or they linger now that dispatched runs can
+      # succeed (allowed_bots, above). The run_id→path match already scopes this
+      # to this workflow's comments, so running it on dispatched reviews is safe.
+      # (Whether a dispatched run's OWN summary comment is later foldable depends
+      # on it carrying an `actions/runs/<id>` link; if agent mode omits that, the
+      # comment simply isn't matched — a smaller residual than folding nothing.)
       - name: Collapse previous Claude review comments
-        if: steps.claude-review.outcome == 'success' && github.event_name == 'pull_request'
+        if: steps.claude-review.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
