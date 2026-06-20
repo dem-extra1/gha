@@ -517,10 +517,23 @@ jobs:
           BRANCH: ${{ steps.pr_checkout.outputs.branch }}
           STARTING_SHA: ${{ steps.pr_checkout.outputs.starting_sha }}
         run: |
+          # claude-code-action's restoreConfigFromBase resets the agent's own
+          # config files to the base branch before the run, so a PR can't
+          # rewrite the reviewing agent's instructions. On a PR that
+          # legitimately edits one of those files, that reset is a residual
+          # working-tree change; the auto-commit below would commit it and
+          # silently revert the PR's own config edits (#39). Restore those paths
+          # to the PR branch tip (HEAD) first so the sweep only commits Claude's
+          # intentional changes. The list mirrors the action's SENSITIVE_PATHS
+          # (root-only, path-literal); `|| true` tolerates paths absent here.
+          for cfg in .claude .mcp.json .claude.json .gitmodules .ripgreprc CLAUDE.md CLAUDE.local.md .husky; do
+            git checkout HEAD -- "$cfg" 2>/dev/null || true
+          done
           # Sweep changes Claude staged or left untracked but never committed so
           # they aren't dropped (uncommitted edits never advance HEAD, and the
-          # push below only fires when HEAD moved). Mirrors the issue-trigger
-          # finalize step. HEAD is the PR's checked-out head branch here.
+          # push below only fires when HEAD moved). HEAD is the PR's checked-out
+          # head branch here. (The issue-trigger finalize step sweeps the same
+          # way but does NOT revert config first: no base-restore runs there.)
           if [ -n "$(git status --porcelain)" ]; then
             git config user.name "claude[bot]"
             git config user.email "claude[bot]@users.noreply.github.com"
@@ -737,7 +750,10 @@ jobs:
           # the no-new-commits check below doesn't discard them. The agent works
           # on the checked-out $BRANCH, so committing on HEAD lands on $BRANCH in
           # the normal case (a stray detach is the pre-existing edge the $BRANCH
-          # measurement below already tolerates).
+          # measurement below already tolerates). Unlike the PR-trigger sweep,
+          # this does NOT revert restoreConfigFromBase paths first: that restore
+          # only runs in PR contexts (there's no base branch on an issue
+          # trigger), so config edits here are genuine and must be committed.
           if [ -n "$(git status --porcelain)" ]; then
             git config user.name "claude[bot]"
             git config user.email "claude[bot]@users.noreply.github.com"
