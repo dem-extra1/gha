@@ -8,6 +8,52 @@ Central, reusable GitHub Actions for `d-morrison` / `UCD-SERG` / `ucdavis` R-pac
 and Quarto repositories (see [`README.md`](README.md)). Each capability ships as a
 composite action plus a `workflow_call` reusable workflow. Consumers pin to `@v1`.
 
+### Layout
+
+- Per-capability composite-action directories at the repo root, each with an
+  `action.yml` and, for R/Python capabilities, a language-specific helper
+  script — e.g. `check-bibliography-dois/` (R), `check-non-standard-chars/` and
+  `check-phi/` (Python). `check-links/` bundles `lychee.default.toml`;
+  `preview/`, `quarto-publish/`, and `open-sync-pr/` are action-only (the last
+  is the shared push-and-open-PR helper used by `bump-submodule` and
+  `sync-shared-fragments`).
+- `.github/workflows/` — the `workflow_call` reusable workflows that wrap the
+  composites (one per consumer-facing capability — the shared internal
+  `open-sync-pr` composite has no wrapper), plus the `claude.yml` and
+  `claude-code-review.yml` reusable wrappers, and `_selftest.yml`, which
+  exercises composites on every PR — local `./` refs for pre-release
+  capabilities, and `@v1` through the reusable-workflow wrappers for stable ones.
+  `claude-bot.yml` and `claude-review.yml` are event-triggered workflows that run
+  the Claude bot in this repo, not `workflow_call` wrappers.
+- Several workflows have no corresponding root composite: `check-news.yml`,
+  `summary.yml`, and `preview-deploy.yml` are `workflow_call` reusable workflows
+  that wrap external actions; `cleanup-pr-previews.yml` is a self-contained
+  `workflow_call` reusable workflow (inline shell logic, no external composite);
+  `bump-submodule.yml` and `sync-shared-fragments.yml` are `workflow_call`
+  reusable workflows that call the shared internal `open-sync-pr` composite;
+  `slide-major-tag.yml` is push- and dispatch-triggered and runs only in this repo.
+- `.github/actions/checkout-submodules/` — a small shared composite reused by the
+  reusable workflows.
+- `examples/` — caller stubs consumers copy into their own repos.
+- `README.md`, `CHANGELOG.md` — top-level project docs;
+  `REVDEPS.md` — lists registered downstream consumer repos.
+
+When editing a consumer-facing capability, change the composite (`<name>/action.yml`,
+plus its helper script if one exists) and keep the wrapping reusable workflow and its
+`examples/<name>.yml` stub in sync. Internal-only composites (like `open-sync-pr`)
+have no wrapper or example stub to update. New `.github/workflows/` changes are
+exercised by `_selftest.yml`; because brand-new actions aren't at the `@v1` tag
+yet, the selftest runs them via the local `./<name>` ref until release.
+
+### Tests
+
+`check-phi/tests/test_detectors.py` is a pytest suite pinning each PHI detector's
+positive and negative behavior. Run it with `python3 -m pytest check-phi/tests/ -q`;
+CI runs it as the `phi-tests` job in `_selftest.yml`. There's no broader unit-test
+harness — most capabilities are validated end-to-end by `_selftest.yml`, running
+against this repo itself or small throwaway fixtures (stable capabilities via
+`@v1`, pre-release ones from local source).
+
 ## GitHub access in remote / web sessions
 
 Claude Code on the web (and other remote/CI sessions) runs in a sandbox where the
