@@ -241,6 +241,16 @@ jobs:
             but when the cause is a permission error, add a one-line footnote at
             the bottom of the summary so the failure is diagnosable:
             `> ℹ️ Inline comments were unavailable (permission error); findings appear above with path:line anchors.`
+
+            **Confirming review (no new findings):** If you find no new issues
+            — because no code changed since the last review, or every concern
+            is already addressed — do not just say "no issues found." Find the
+            most recent prior review comment on this PR (look for a
+            `claude[bot]` comment containing a review verdict) and reference it
+            explicitly: state the prior verdict, link to that comment by its
+            GitHub URL, and explain that it still stands. This lets readers
+            know the confirming review ran and why it produced no new findings,
+            rather than leaving the PR thread silent.
             ${{ inputs.prompt-addendum }}
           # `track_progress` forces tag mode, which guarantees a tracking
           # comment even when the plugin scores the PR below its post
