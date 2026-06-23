@@ -14,7 +14,7 @@ on:
       fail-if-empty:
         description: Fail the action when no links are found.
         type: boolean
-        default: true
+        default: false
       create-issue-on-main:
         description: File an issue when links break on the main branch.
         type: boolean

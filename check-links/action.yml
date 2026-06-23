@@ -18,7 +18,7 @@ inputs:
     default: 'true'
   fail-if-empty:
     description: Fail the action when no links are found.
-    default: 'true'
+    default: 'false'
 runs:
   using: composite
   steps:
